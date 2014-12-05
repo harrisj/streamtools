@@ -1,6 +1,7 @@
 package library
 
 import (
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/smtp"
@@ -111,7 +112,8 @@ func newSMTPClient(username, password, host string, port int) (*smtp.Client, err
 
 	// if the server can handle TLS, use it
 	if ok, _ := client.Extension("STARTTLS"); ok {
-		if err = client.StartTLS(nil); err != nil {
+		cfg := &tls.Config{ServerName: host}
+		if err = client.StartTLS(cfg); err != nil {
 			return nil, err
 		}
 	}
@@ -332,10 +334,14 @@ func (e *ToEmail) Run() {
 					sent++
 					break
 				}
+				if err != nil {
+					e.Error(err)
+				}
 				// attempt to reset client after each failure.
 				connected = e.resetClient()
 				if !connected {
 					// if we cannot reconnect, dont retry sending.
+					e.Error("cannot recconet")
 					break
 				}
 				time.Sleep(time.Duration(retries*errWait) * time.Second)

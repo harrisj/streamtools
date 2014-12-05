@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"log"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/nytlabs/streamtools/st/blocks" // blocks
 )
@@ -35,6 +36,10 @@ func (b *FromHTTPStream) Setup() {
 	b.out = b.Broadcast()
 }
 
+func dialTimeout(network, addr string) (net.Conn, error) {
+	return net.DialTimeout(network, addr, time.Duration(10*time.Second))
+}
+
 func listen(b *FromHTTPStream, endpoint string, auth string, dataChan chan interface{}, quitChan chan bool) {
 	transport := http.Transport{
 		Dial: dialTimeout,
@@ -51,18 +56,18 @@ func listen(b *FromHTTPStream, endpoint string, auth string, dataChan chan inter
 	req, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
 		b.Error(err)
-		return
+		goto WaitForDeath
 	}
 	if len(auth) > 0 {
 		req.SetBasicAuth(strings.Split(auth, ":")[0], strings.Split(auth, ":")[1])
 	}
-	log.Print("getting new response")
 	res, err = client.Do(req)
 	if err != nil {
 		b.Error(err)
-		return
+		goto WaitForDeath
 	}
 	defer res.Body.Close()
+Loop:
 	for {
 		select {
 		case <-quitChan:
@@ -73,9 +78,8 @@ func listen(b *FromHTTPStream, endpoint string, auth string, dataChan chan inter
 			p, err := res.Body.Read(buffer)
 
 			if err != nil && err.Error() == "EOF" {
-				log.Println("End of stream reached!")
-				res = nil
-				continue
+				b.Error(err)
+				break Loop
 			}
 
 			if err != nil {
@@ -87,6 +91,7 @@ func listen(b *FromHTTPStream, endpoint string, auth string, dataChan chan inter
 				break
 			}
 			body.Write(buffer[:p])
+
 			if bytes.Equal(d1, buffer[p-2:p]) || bytes.Equal(d2, buffer[p-2:p]) { // ended with }\n
 				for _, blob := range bytes.Split(body.Bytes(), []byte{10}) { // split on new line in case there are multuple messages per buffer
 					if len(blob) > 0 {
@@ -107,11 +112,11 @@ func listen(b *FromHTTPStream, endpoint string, auth string, dataChan chan inter
 					}
 				}
 				body.Reset()
-			} else { // ended with CRLF which we don't care about
-				body.Reset()
 			}
 		}
 	}
+WaitForDeath:
+	<-quitChan
 }
 
 // creates a persistent HTTP connection, emitting all messages from

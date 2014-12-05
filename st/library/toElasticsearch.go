@@ -1,8 +1,7 @@
 package library
 
 import (
-	"github.com/mattbaird/elastigo/api"
-	"github.com/mattbaird/elastigo/core"
+	elastigo "github.com/mattbaird/elastigo/lib"
 	"github.com/nytlabs/streamtools/st/blocks" // blocks
 	"github.com/nytlabs/streamtools/st/util"
 )
@@ -17,12 +16,11 @@ type ToElasticsearch struct {
 	quit      blocks.MsgChan
 }
 
-// we need to build a simple factory so that streamtools can make new blocks of this kind
+// a bit of boilerplate for streamtools
 func NewToElasticsearch() blocks.BlockInterface {
 	return &ToElasticsearch{}
 }
 
-// Setup is called once before running the block. We build up the channels and specify what kind of block this is.
 func (b *ToElasticsearch) Setup() {
 	b.Kind = "Data Stores"
 	b.Desc = "sends messages as JSON to a specified index and type in Elasticsearch"
@@ -30,63 +28,62 @@ func (b *ToElasticsearch) Setup() {
 	b.inrule = b.InRoute("rule")
 	b.queryrule = b.QueryRoute("rule")
 	b.quit = b.Quit()
-	b.out = b.Broadcast()
 }
 
-// Run is the block's main loop. Here we listen on the different channels we set up.
-// This block posts a message to a specified Elasticsearch index with the given type.
+// connects to an NSQ topic and emits each message into streamtools.
 func (b *ToElasticsearch) Run() {
 	var err error
-	var index string
-	var indextype string
+	var esIndex string
+	var esType string
+
+	conn := elastigo.NewConn()
 
 	host := "localhost"
 	port := "9200"
 
 	for {
 		select {
-		case msgI := <-b.inrule:
-			host, err = util.ParseString(msgI, "Host")
+		case ruleI := <-b.inrule:
+			host, err = util.ParseString(ruleI, "Host")
 			if err != nil {
 				b.Error(err)
-				continue
-			}
-			port, err = util.ParseString(msgI, "Port")
-			if err != nil {
-				b.Error(err)
-				continue
-			}
-			index, err = util.ParseString(msgI, "Index")
-			if err != nil {
-				b.Error(err)
-				continue
-			}
-			indextype, err = util.ParseString(msgI, "IndexType")
-			if err != nil {
-				b.Error(err)
-				continue
+				break
 			}
 
-			// Set the Elasticsearch Host/Port to Connect to
-			api.Domain = host
-			api.Port = port
+			port, err = util.ParseString(ruleI, "Port")
+			if err != nil {
+				b.Error(err)
+				break
+			}
 
-		case MsgChan := <-b.queryrule:
-			// deal with a query request
-			MsgChan <- map[string]interface{}{
-				"Host":      host,
-				"Port":      port,
-				"Index":     index,
-				"IndexType": indextype,
+			esIndex, err = util.ParseString(ruleI, "Index")
+			if err != nil {
+				b.Error(err)
+				break
+			}
+
+			esType, err = util.ParseString(ruleI, "Type")
+			if err != nil {
+				b.Error(err)
+				break
+			}
+
+			conn.Domain = host
+			conn.Port = port
+
+		case msg := <-b.in:
+			_, err := conn.Index(esIndex, esType, "", nil, msg)
+			if err != nil {
+				b.Error(err)
 			}
 		case <-b.quit:
-			// quit the block
 			return
-		case msg := <-b.in:
-			var args map[string]interface{}
-			_, err := core.Index(index, indextype, "", args, msg)
-			if err != nil {
-				b.Error(err)
+		case c := <-b.queryrule:
+			c <- map[string]interface{}{
+				"Host":  host,
+				"Port":  port,
+				"Index": esIndex,
+				"Type":  esType,
 			}
 		}
 	}

@@ -25,7 +25,7 @@ func NewFromNSQ() blocks.BlockInterface {
 }
 
 func (b *FromNSQ) Setup() {
-	b.Kind = "Queues"
+	b.Kind = "Queue I/O"
 	b.Desc = "reads from a topic in NSQ as specified in this block's rule"
 	b.inrule = b.InRoute("rule")
 	b.queryrule = b.QueryRoute("rule")
@@ -87,7 +87,10 @@ func (b *FromNSQ) Run() {
 			if err != nil {
 				b.Error(err)
 				continue
+			} else {
+				conf.MaxInFlight = int(maxInFlight)
 			}
+
 			channel, err = util.ParseString(rule, "ReadChannel")
 			if err != nil {
 				b.Error(err)
@@ -98,7 +101,6 @@ func (b *FromNSQ) Run() {
 				reader.Stop()
 			}
 
-			conf.Set("maxInFlight", maxInFlight)
 			reader, err = nsq.NewConsumer(topic, channel, conf)
 			if err != nil {
 				b.Error(err)

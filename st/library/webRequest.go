@@ -60,6 +60,7 @@ func (b *WebRequest) Run() {
 	var ok bool
 
 	url := ""
+	requestUrl := ""
 	var urlPath string
 	var urlTree *jee.TokenTree
 
@@ -94,22 +95,28 @@ func (b *WebRequest) Run() {
 			httpMethod, err = util.ParseString(ruleI, "Method")
 			if err != nil {
 				b.Error(err)
-				break
+				continue
 			}
 
 			url, err = util.ParseString(ruleI, "Url")
 			if err != nil {
 				b.Error(err)
+				continue
 			}
 
 			urlPath, err = util.ParseString(ruleI, "UrlPath")
 			if err != nil {
 				b.Error(err)
+				continue
 			}
 
 			if len(url) != 0 && len(urlPath) != 0 {
 				b.Error(errors.New("Specify either a url or a path to a url"))
 				continue
+			}
+
+			if len(urlPath) == 0 {
+				urlTree = nil
 			}
 
 			if len(url) == 0 {
@@ -154,6 +161,7 @@ func (b *WebRequest) Run() {
 				headers = p
 			} else {
 				b.Error(err)
+				continue
 			}
 		case <-b.quit:
 			return
@@ -167,11 +175,17 @@ func (b *WebRequest) Run() {
 					b.Error(err)
 					continue
 				}
-				url, ok = urlInterface.(string)
+				// use the url found via rule.UrlPath in the request
+				requestUrl, ok = urlInterface.(string)
 				if !ok {
 					b.Error(errors.New("couldn't assert url to a string"))
 					continue
 				}
+			}
+
+			// use the rule.Url in the request
+			if len(url) != 0 {
+				requestUrl = url
 			}
 
 			if httpMethod == "POST" || httpMethod == "PUT" {
@@ -186,14 +200,14 @@ func (b *WebRequest) Run() {
 					continue
 				}
 
-				req, err = http.NewRequest(httpMethod, url, bytes.NewReader(requestBody))
+				req, err = http.NewRequest(httpMethod, requestUrl, bytes.NewReader(requestBody))
 				if err != nil {
 					b.Error(err)
 					break
 				}
 
 			} else {
-				req, err = http.NewRequest(httpMethod, url, nil)
+				req, err = http.NewRequest(httpMethod, requestUrl, nil)
 				if err != nil {
 					b.Error(err)
 					break
@@ -213,6 +227,7 @@ func (b *WebRequest) Run() {
 				b.Error(err)
 				break
 			}
+			defer resp.Body.Close()
 
 			body, err := ioutil.ReadAll(resp.Body)
 			if err != nil {
@@ -232,8 +247,6 @@ func (b *WebRequest) Run() {
 				"headers": resp.Header,
 				"status":  resp.Status,
 			}
-
-			resp.Body.Close()
 
 			b.out <- outMsg
 
